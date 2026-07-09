@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>FarmFlow Pro</title>
+    <link rel="manifest" href="/manifest.json?v=3" />
+    <meta name="theme-color" content="#059669" />
+    <link rel="icon" type="image/png" href="https://cdn-icons-png.flaticon.com/512/3656/3656403.png" />
+    <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/3656/3656403.png" />
+    
+    <!-- Apple standalone app capabilities -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="FarmFlow Pro" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    <script>
+      // Register Service Worker for PWA (Install/Download App) support on Apple & Android
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js')
+            .then((registration) => {
+              console.log('Service Worker registered successfully with scope:', registration.scope);
+            })
+            .catch((error) => {
+              console.error('Service Worker registration failed:', error);
+            });
+        });
+      }
+    </script>
+  </body>
+</html>
+
