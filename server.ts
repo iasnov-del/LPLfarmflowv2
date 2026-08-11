@@ -1221,6 +1221,16 @@ async function startServer() {
       return res.status(400).json({ error: "Captured image is required for facial recognition." });
     }
 
+    // Check if specific employee selected and if they have a photo
+    if (selected_employee_id) {
+      const selectedEmp = await Employee.findById(selected_employee_id);
+      if (selectedEmp && (!selectedEmp.image_url || selectedEmp.image_url.trim() === '')) {
+        return res.status(400).json({
+          error: `Selected employee (${selectedEmp.name}) does not have a profile photo registered yet. Please upload a profile photo under Staff Roster first.`
+        });
+      }
+    }
+
     // Get active employees with photos
     const employees = await Employee.find({ 
       resignation_date: { $exists: false },
@@ -1229,34 +1239,40 @@ async function startServer() {
 
     if (!employees || employees.length === 0) {
       return res.status(400).json({ 
-        error: "No employee profile photos found in the database. Please make sure employees have photos uploaded in Staff Management." 
+        error: "No employee profile photos found in the database. Please register staff profile photos under Staff Roster tab first." 
       });
     }
 
-    // Prepare prompt parts for Gemini
-    const imageParts: any[] = [];
-    
-    // Clean base64 strings
+    // Clean base64 string for captured image
     const cleanCaptured = captured_image.replace(/^data:image\/\w+;base64,/, "");
     const mimeMatch = captured_image.match(/^data:(image\/\w+);base64,/);
     const capturedMime = mimeMatch ? mimeMatch[1] : "image/jpeg";
 
-    // If specific employee selected, filter list or put them first
+    // Filter candidates
     let candidateEmployees = employees;
     if (selected_employee_id) {
-      candidateEmployees = employees.filter(e => e._id.toString() === selected_employee_id);
-      if (candidateEmployees.length === 0) {
-        candidateEmployees = employees;
+      const filtered = employees.filter(e => e._id.toString() === selected_employee_id);
+      if (filtered.length > 0) {
+        candidateEmployees = filtered;
       }
     }
 
-    const employeeListContext = candidateEmployees.map(emp => ({
-      id: emp._id.toString(),
-      employee_id_no: emp.employee_id_no,
-      name: emp.name,
-      position: emp.position,
-      has_photo: !!emp.image_url
-    }));
+    // Extract valid base64 candidates
+    const validCandidates: { emp: any; cleanPhoto: string; mime: string }[] = [];
+    candidateEmployees.forEach((emp) => {
+      if (emp.image_url && emp.image_url.startsWith("data:image")) {
+        const cleanEmpPhoto = emp.image_url.replace(/^data:image\/\w+;base64,/, "");
+        const empMimeMatch = emp.image_url.match(/^data:(image\/\w+);base64,/);
+        const empMime = empMimeMatch ? empMimeMatch[1] : "image/jpeg";
+        validCandidates.push({ emp, cleanPhoto: cleanEmpPhoto, mime: empMime });
+      }
+    });
+
+    if (validCandidates.length === 0) {
+      return res.status(400).json({ 
+        error: "No valid reference profile photos available for comparison. Please upload a clear photo for staff in Staff Roster." 
+      });
+    }
 
     // Build multimodal prompt
     const contents: any[] = [
@@ -1268,38 +1284,26 @@ async function startServer() {
       }
     ];
 
-    // Add candidate employee photos
-    candidateEmployees.forEach((emp, index) => {
-      if (emp.image_url && emp.image_url.startsWith("data:image")) {
-        const cleanEmpPhoto = emp.image_url.replace(/^data:image\/\w+;base64,/, "");
-        const empMimeMatch = emp.image_url.match(/^data:(image\/\w+);base64,/);
-        const empMime = empMimeMatch ? empMimeMatch[1] : "image/jpeg";
-        contents.push({
-          inlineData: {
-            mimeType: empMime,
-            data: cleanEmpPhoto
-          }
-        });
-      }
+    validCandidates.forEach(cand => {
+      contents.push({
+        inlineData: {
+          mimeType: cand.mime,
+          data: cand.cleanPhoto
+        }
+      });
     });
 
     const promptText = `
-You are an advanced biometric facial recognition agent for employee attendance (Daily Time Record).
-Image 1 is the live captured webcam image of an employee attempting to clock in/out.
-${candidateEmployees.map((emp, i) => `Image ${i + 2} is the reference profile photo for Employee: ${emp.name} (ID: ${emp.employee_id_no}, DB ID: ${emp._id.toString()}).`).join("\n")}
+You are a biometric facial recognition system for employee attendance logging.
+Image 1 is the live captured photo from the clock-in terminal.
+${validCandidates.map((c, i) => `Image ${i + 2}: Reference profile photo of ${c.emp.name} (Employee ID: ${c.emp.employee_id_no}, Database ID: ${c.emp._id.toString()})`).join("\n")}
 
-Task:
-Compare Image 1 (live capture) against each candidate reference photo.
-Determine if Image 1 matches any employee in the reference photos with reasonable facial similarity (accounting for lighting, camera angle, minor expressions, glasses).
-Return a JSON object:
-{
-  "matched": boolean,
-  "matched_employee_id": string (the exact DB ID of the matched employee, or null if no match),
-  "employee_name": string (name of matched employee or null),
-  "confidence_percentage": number (0 to 100 confidence score),
-  "reason": string (brief explanation of visual verification match result)
-}
-If no employee strongly matches or confidence is below 60%, set "matched": false and "matched_employee_id": null.
+Verification Guidelines:
+1. Examine Image 1 (live capture) and compare facial features (eyes, nose, mouth shape, jawline, facial structure) against each reference photo.
+2. Account for variations in lighting, webcam quality, minor facial expressions, pose angle, or glasses.
+3. If Image 1 depicts the same person as one of the reference photos with reasonable certainty, determine it as a MATCH.
+4. Set "matched": true, "matched_employee_id": "<exact_database_id>", "employee_name": "<employee_name>", "confidence_percentage": <number 50-100>, and provide a brief "reason".
+5. If Image 1 does not match any reference photo or confidence is under 50%, set "matched": false, "matched_employee_id": null.
 `;
 
     contents.push({ text: promptText });
@@ -1327,11 +1331,14 @@ If no employee strongly matches or confidence is below 60%, set "matched": false
       const resultText = response.text ? response.text.trim() : "{}";
       const result = JSON.parse(resultText);
 
-      if (!result.matched || !result.matched_employee_id || result.confidence_percentage < 60) {
+      // Require 50% threshold or valid match
+      const minThreshold = selected_employee_id ? 45 : 50;
+
+      if (!result.matched || !result.matched_employee_id || result.confidence_percentage < minThreshold) {
         return res.status(400).json({
           matched: false,
           confidence_percentage: result.confidence_percentage || 0,
-          reason: result.reason || "Facial recognition match confidence was too low. Please ensure your face is clearly visible in well-lit conditions."
+          reason: result.reason || "Facial recognition match confidence was below required threshold. Please ensure face is centered in good lighting."
         });
       }
 

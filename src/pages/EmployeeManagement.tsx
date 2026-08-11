@@ -691,15 +691,53 @@ export default function EmployeeManagement({ user }: { user: any }) {
                   ) : (
                     <div className="space-y-3">
                       <div className="flex items-center gap-3 text-rose-700">
-                        <AlertCircle size={28} className="text-rose-600" />
+                        <AlertCircle size={28} className="text-rose-600 shrink-0" />
                         <div>
                           <h3 className="font-black text-base">Facial Recognition Unsuccessful</h3>
-                          <p className="text-xs text-rose-800 font-medium">{lastScanResult.error}</p>
+                          <p className="text-xs text-rose-800 font-medium mt-0.5">{lastScanResult.error}</p>
                         </div>
                       </div>
-                      <p className="text-xs text-stone-500 leading-relaxed">
-                        Tip: You can manually select an employee below to assist the biometric verification or ensure light sources are facing you.
-                      </p>
+
+                      <div className="p-3.5 bg-white rounded-2xl border border-stone-200/80 text-xs space-y-2 text-stone-700 shadow-sm">
+                        <p className="font-bold text-stone-900 flex items-center gap-1.5">
+                          <Sparkles size={14} className="text-amber-500" /> Troubleshooting Tips for Verification:
+                        </p>
+                        <ul className="list-disc list-inside space-y-1 text-[11px] text-stone-600 pl-1">
+                          <li><strong className="text-stone-800">Pre-select your name:</strong> Choose your name in the dropdown below to perform a 1-to-1 face comparison.</li>
+                          <li><strong className="text-stone-800">Check lighting:</strong> Ensure your face is clearly illuminated without heavy shadows or backlight.</li>
+                          <li><strong className="text-stone-800">Camera angle:</strong> Face the camera straight-on and align your face inside the green guide oval.</li>
+                          <li><strong className="text-stone-800">Missing photo?</strong> Ensure your reference profile photo is registered under Staff Roster.</li>
+                        </ul>
+
+                        {selectedKioskEmpId && (
+                          <div className="pt-2 border-t border-stone-100 flex items-center justify-between">
+                            <span className="text-[11px] text-stone-500">Need to update reference photo?</span>
+                            <button
+                              onClick={() => {
+                                const targetEmp = (employees || []).find(e => e.id === selectedKioskEmpId);
+                                if (targetEmp) {
+                                  setEditingEmployee(targetEmp);
+                                  setFormData({
+                                    name: targetEmp.name || '',
+                                    birthday: targetEmp.birthday || '',
+                                    address: targetEmp.address || '',
+                                    contact_no: targetEmp.contact_no || '',
+                                    email: targetEmp.email || '',
+                                    date_hired: targetEmp.date_hired || new Date().toISOString().split('T')[0],
+                                    position: targetEmp.position || '',
+                                    resignation_date: targetEmp.resignation_date || '',
+                                    image_url: targetEmp.image_url || ''
+                                  });
+                                  setIsModalOpen(true);
+                                }
+                              }}
+                              className="px-3 py-1 bg-stone-900 text-white rounded-lg text-[11px] font-bold hover:bg-stone-800 transition-all cursor-pointer"
+                            >
+                              Update Staff Photo
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
                 </motion.div>
@@ -730,6 +768,39 @@ export default function EmployeeManagement({ user }: { user: any }) {
                   </option>
                 ))}
               </select>
+
+              {/* Notice if selected employee has no photo */}
+              {selectedKioskEmpId && !((employees || []).find(e => e.id === selectedKioskEmpId)?.image_url) && (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-2xl flex items-center justify-between text-xs text-amber-900">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle size={16} className="text-amber-600 shrink-0" />
+                    <span className="font-bold">This employee has no reference photo uploaded yet.</span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      const targetEmp = (employees || []).find(e => e.id === selectedKioskEmpId);
+                      if (targetEmp) {
+                        setEditingEmployee(targetEmp);
+                        setFormData({
+                          name: targetEmp.name || '',
+                          birthday: targetEmp.birthday || '',
+                          address: targetEmp.address || '',
+                          contact_no: targetEmp.contact_no || '',
+                          email: targetEmp.email || '',
+                          date_hired: targetEmp.date_hired || new Date().toISOString().split('T')[0],
+                          position: targetEmp.position || '',
+                          resignation_date: targetEmp.resignation_date || '',
+                          image_url: targetEmp.image_url || ''
+                        });
+                        setIsModalOpen(true);
+                      }
+                    }}
+                    className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg text-[11px] transition-colors cursor-pointer shrink-0"
+                  >
+                    + Add Photo
+                  </button>
+                </div>
+              )}
 
               {/* Registered Photo Indicator Summary */}
               <div className="p-4 bg-stone-50 rounded-2xl border border-stone-100 flex items-center justify-between text-xs">
