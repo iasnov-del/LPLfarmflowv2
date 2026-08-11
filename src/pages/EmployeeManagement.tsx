@@ -92,23 +92,54 @@ export default function EmployeeManagement({ user }: { user: any }) {
   // Search filter for staff list
   const [staffSearch, setStaffSearch] = useState('');
 
+  // Camera Facing Mode States for Phones / Tablets
+  const [kioskFacingMode, setKioskFacingMode] = useState<'user' | 'environment'>('user');
+  const [modalFacingMode, setModalFacingMode] = useState<'user' | 'environment'>('user');
+
   // Camera Management for Add/Edit Modal
-  const startCamera = async () => {
+  const startCamera = async (overrideFacing?: 'user' | 'environment') => {
     setCameraError(null);
     setIsCameraActive(true);
+    const mode = overrideFacing || modalFacingMode;
+    
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+    }
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { width: 400, height: 400, facingMode: 'user' } 
-      });
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { 
+            width: { ideal: 640 }, 
+            height: { ideal: 640 }, 
+            facingMode: { ideal: mode } 
+          } 
+        });
+      } catch (firstErr) {
+        // Fallback for devices without strict facingMode support
+        stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      }
+
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
       }
     } catch (err: any) {
       console.error("Error accessing camera:", err);
-      setCameraError("Camera access denied or unavailable.");
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        setCameraError("Camera access permission was denied. Please tap the lock/camera icon in your browser address bar to allow camera access.");
+      } else {
+        setCameraError("Camera unavailable or blocked by device settings.");
+      }
       setIsCameraActive(false);
     }
+  };
+
+  const toggleModalCamera = () => {
+    const nextMode = modalFacingMode === 'user' ? 'environment' : 'user';
+    setModalFacingMode(nextMode);
+    startCamera(nextMode);
   };
 
   const stopCamera = () => {
@@ -136,12 +167,29 @@ export default function EmployeeManagement({ user }: { user: any }) {
   };
 
   // Camera Management for Kiosk Station
-  const startKioskCamera = async () => {
+  const startKioskCamera = async (overrideFacing?: 'user' | 'environment') => {
     setKioskCameraError(null);
+    const mode = overrideFacing || kioskFacingMode;
+
+    if (kioskStreamRef.current) {
+      kioskStreamRef.current.getTracks().forEach(track => track.stop());
+    }
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 480, facingMode: 'user' }
-      });
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { 
+            width: { ideal: 1280 }, 
+            height: { ideal: 720 }, 
+            facingMode: { ideal: mode } 
+          }
+        });
+      } catch (firstErr) {
+        // Fallback for devices without strict resolution/facingMode
+        stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      }
+
       kioskStreamRef.current = stream;
       if (kioskVideoRef.current) {
         kioskVideoRef.current.srcObject = stream;
@@ -149,9 +197,19 @@ export default function EmployeeManagement({ user }: { user: any }) {
       setIsKioskCameraActive(true);
     } catch (err: any) {
       console.error("Kiosk camera error:", err);
-      setKioskCameraError("Unable to access camera for facial recognition kiosk. Please check camera permissions.");
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        setKioskCameraError("Camera permission denied. On phones and tablets, tap the permissions/camera icon in your address bar and tap 'Allow'.");
+      } else {
+        setKioskCameraError("Unable to access camera for facial recognition. Please ensure camera permissions are enabled on your phone/tablet.");
+      }
       setIsKioskCameraActive(false);
     }
+  };
+
+  const toggleKioskCamera = () => {
+    const nextMode = kioskFacingMode === 'user' ? 'environment' : 'user';
+    setKioskFacingMode(nextMode);
+    startKioskCamera(nextMode);
   };
 
   const stopKioskCamera = () => {
@@ -500,6 +558,17 @@ export default function EmployeeManagement({ user }: { user: any }) {
                       )}
                     </div>
                   </div>
+
+                  {/* Switch Camera Button for Phones / Tablets */}
+                  <button
+                    type="button"
+                    onClick={toggleKioskCamera}
+                    className="absolute bottom-3 right-3 z-10 px-3 py-1.5 bg-stone-900/80 hover:bg-stone-900 text-white text-[11px] font-bold rounded-xl border border-stone-700 backdrop-blur-md flex items-center gap-1.5 transition-all cursor-pointer shadow-lg"
+                    title="Switch Front / Rear Camera"
+                  >
+                    <RefreshCw size={13} className="text-emerald-400" />
+                    <span>{kioskFacingMode === 'user' ? 'Front Camera 🤳' : 'Rear Camera 📷'}</span>
+                  </button>
                 </>
               ) : (
                 <div className="text-center p-8">
@@ -1044,6 +1113,15 @@ export default function EmployeeManagement({ user }: { user: any }) {
                     <div className="flex flex-col items-center">
                       <div className="relative w-48 h-48 bg-black rounded-2xl overflow-hidden mb-3 border-2 border-emerald-500">
                         <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover transform -scale-x-100" />
+                        <button
+                          type="button"
+                          onClick={toggleModalCamera}
+                          className="absolute bottom-2 right-2 z-10 px-2 py-1 bg-stone-900/80 hover:bg-stone-900 text-white text-[10px] font-bold rounded-lg border border-stone-700 backdrop-blur-sm flex items-center gap-1 transition-all cursor-pointer"
+                          title="Switch Front / Rear Camera"
+                        >
+                          <RefreshCw size={12} className="text-emerald-400" />
+                          <span>{modalFacingMode === 'user' ? 'Front' : 'Rear'}</span>
+                        </button>
                       </div>
                       <div className="flex items-center gap-2">
                         <button
