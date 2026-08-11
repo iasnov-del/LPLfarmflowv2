@@ -5,8 +5,18 @@ import path from "path";
 import fs from "fs";
 import dotenv from "dotenv";
 import bcrypt from "bcryptjs";
+import { GoogleGenAI, Type } from "@google/genai";
 
 dotenv.config();
+
+const ai = new GoogleGenAI({
+  apiKey: process.env.GEMINI_API_KEY,
+  httpOptions: {
+    headers: {
+      'User-Agent': 'aistudio-build',
+    }
+  }
+});
 
 const MONGODB_URI = process.env.MONGODB_URI || process.env.MONGODB_URl || "MISSING_MONGODB_URI";
 const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME || "production";
@@ -152,6 +162,20 @@ const employeeSchema = new mongoose.Schema({
   image_url: String
 });
 const Employee = mongoose.model("Employee", employeeSchema);
+
+const dtrSchema = new mongoose.Schema({
+  employee_id: { type: mongoose.Schema.Types.ObjectId, ref: "Employee", required: true },
+  date: { type: String, required: true }, // YYYY-MM-DD
+  time_in: { type: String }, // HH:MM:SS or ISO String
+  time_out: { type: String },
+  time_in_photo: { type: String },
+  time_out_photo: { type: String },
+  time_in_verification_confidence: { type: Number },
+  time_out_verification_confidence: { type: Number },
+  status: { type: String, default: "present" }, // present, late, completed
+  notes: { type: String }
+});
+const DailyTimeRecord = mongoose.model("DailyTimeRecord", dtrSchema);
 
 const flockTransferSchema = new mongoose.Schema({
   from_flock_id: { type: mongoose.Schema.Types.ObjectId, ref: "Flock" },
@@ -1152,6 +1176,287 @@ async function startServer() {
     res.json({ success: true });
   }));
 
+  app.delete("/api/employees/:id", catchAsync(async (req: express.Request, res: express.Response) => {
+    await Employee.findByIdAndDelete(req.params.id);
+    await DailyTimeRecord.deleteMany({ employee_id: req.params.id });
+    res.json({ success: true });
+  }));
+
+  // Daily Time Record (DTR) Routes
+  app.get("/api/dtr", catchAsync(async (req: express.Request, res: express.Response) => {
+    const { date, employee_id, startDate, endDate } = req.query;
+    const filter: any = {};
+    if (date) filter.date = date;
+    if (employee_id) filter.employee_id = employee_id;
+    if (startDate || endDate) {
+      filter.date = {};
+      if (startDate) filter.date.$gte = startDate;
+      if (endDate) filter.date.$lte = endDate;
+    }
+
+    const records = await DailyTimeRecord.find(filter).populate("employee_id");
+    res.json(records.map(doc => {
+      const obj = doc.toObject();
+      return {
+        id: obj._id.toString(),
+        employee_id: obj.employee_id ? mapId(obj.employee_id) : null,
+        date: obj.date,
+        time_in: obj.time_in,
+        time_out: obj.time_out,
+        time_in_photo: obj.time_in_photo,
+        time_out_photo: obj.time_out_photo,
+        time_in_verification_confidence: obj.time_in_verification_confidence,
+        time_out_verification_confidence: obj.time_out_verification_confidence,
+        status: obj.status,
+        notes: obj.notes
+      };
+    }));
+  }));
+
+  // Facial Recognition Verification & Clock-In / Clock-Out
+  app.post("/api/dtr/verify-face", catchAsync(async (req: express.Request, res: express.Response) => {
+    const { captured_image, action, selected_employee_id } = req.body; // action: 'clock_in' | 'clock_out' | 'verify'
+
+    if (!captured_image) {
+      return res.status(400).json({ error: "Captured image is required for facial recognition." });
+    }
+
+    // Get active employees with photos
+    const employees = await Employee.find({ 
+      resignation_date: { $exists: false },
+      image_url: { $exists: true, $ne: "" }
+    });
+
+    if (!employees || employees.length === 0) {
+      return res.status(400).json({ 
+        error: "No employee profile photos found in the database. Please make sure employees have photos uploaded in Staff Management." 
+      });
+    }
+
+    // Prepare prompt parts for Gemini
+    const imageParts: any[] = [];
+    
+    // Clean base64 strings
+    const cleanCaptured = captured_image.replace(/^data:image\/\w+;base64,/, "");
+    const mimeMatch = captured_image.match(/^data:(image\/\w+);base64,/);
+    const capturedMime = mimeMatch ? mimeMatch[1] : "image/jpeg";
+
+    // If specific employee selected, filter list or put them first
+    let candidateEmployees = employees;
+    if (selected_employee_id) {
+      candidateEmployees = employees.filter(e => e._id.toString() === selected_employee_id);
+      if (candidateEmployees.length === 0) {
+        candidateEmployees = employees;
+      }
+    }
+
+    const employeeListContext = candidateEmployees.map(emp => ({
+      id: emp._id.toString(),
+      employee_id_no: emp.employee_id_no,
+      name: emp.name,
+      position: emp.position,
+      has_photo: !!emp.image_url
+    }));
+
+    // Build multimodal prompt
+    const contents: any[] = [
+      {
+        inlineData: {
+          mimeType: capturedMime,
+          data: cleanCaptured
+        }
+      }
+    ];
+
+    // Add candidate employee photos
+    candidateEmployees.forEach((emp, index) => {
+      if (emp.image_url && emp.image_url.startsWith("data:image")) {
+        const cleanEmpPhoto = emp.image_url.replace(/^data:image\/\w+;base64,/, "");
+        const empMimeMatch = emp.image_url.match(/^data:(image\/\w+);base64,/);
+        const empMime = empMimeMatch ? empMimeMatch[1] : "image/jpeg";
+        contents.push({
+          inlineData: {
+            mimeType: empMime,
+            data: cleanEmpPhoto
+          }
+        });
+      }
+    });
+
+    const promptText = `
+You are an advanced biometric facial recognition agent for employee attendance (Daily Time Record).
+Image 1 is the live captured webcam image of an employee attempting to clock in/out.
+${candidateEmployees.map((emp, i) => `Image ${i + 2} is the reference profile photo for Employee: ${emp.name} (ID: ${emp.employee_id_no}, DB ID: ${emp._id.toString()}).`).join("\n")}
+
+Task:
+Compare Image 1 (live capture) against each candidate reference photo.
+Determine if Image 1 matches any employee in the reference photos with reasonable facial similarity (accounting for lighting, camera angle, minor expressions, glasses).
+Return a JSON object:
+{
+  "matched": boolean,
+  "matched_employee_id": string (the exact DB ID of the matched employee, or null if no match),
+  "employee_name": string (name of matched employee or null),
+  "confidence_percentage": number (0 to 100 confidence score),
+  "reason": string (brief explanation of visual verification match result)
+}
+If no employee strongly matches or confidence is below 60%, set "matched": false and "matched_employee_id": null.
+`;
+
+    contents.push({ text: promptText });
+
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-3.6-flash",
+        contents: { parts: contents },
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              matched: { type: Type.BOOLEAN },
+              matched_employee_id: { type: Type.STRING },
+              employee_name: { type: Type.STRING },
+              confidence_percentage: { type: Type.NUMBER },
+              reason: { type: Type.STRING }
+            },
+            required: ["matched", "confidence_percentage", "reason"]
+          }
+        }
+      });
+
+      const resultText = response.text ? response.text.trim() : "{}";
+      const result = JSON.parse(resultText);
+
+      if (!result.matched || !result.matched_employee_id || result.confidence_percentage < 60) {
+        return res.status(400).json({
+          matched: false,
+          confidence_percentage: result.confidence_percentage || 0,
+          reason: result.reason || "Facial recognition match confidence was too low. Please ensure your face is clearly visible in well-lit conditions."
+        });
+      }
+
+      // Match succeeded! Find the matched employee
+      const matchedEmployee = await Employee.findById(result.matched_employee_id);
+      if (!matchedEmployee) {
+        return res.status(404).json({ error: "Matched employee profile not found." });
+      }
+
+      const now = new Date();
+      // Format current local date YYYY-MM-DD and time HH:mm:ss
+      const localDate = now.toISOString().split("T")[0];
+      const localTime = now.toLocaleTimeString('en-US', { hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+      // Check if DTR entry exists for today
+      let dtr = await DailyTimeRecord.findOne({
+        employee_id: matchedEmployee._id,
+        date: localDate
+      });
+
+      let clockAction: "time_in" | "time_out" = "time_in";
+
+      if (action === "clock_out" || (dtr && dtr.time_in && !dtr.time_out)) {
+        clockAction = "time_out";
+      }
+
+      if (clockAction === "time_in") {
+        if (dtr && dtr.time_in && dtr.time_out) {
+          return res.status(400).json({
+            error: `${matchedEmployee.name} has already completed Time-In and Time-Out for today (${localDate}).`
+          });
+        }
+
+        if (!dtr) {
+          dtr = new DailyTimeRecord({
+            employee_id: matchedEmployee._id,
+            date: localDate,
+            time_in: localTime,
+            time_in_photo: captured_image,
+            time_in_verification_confidence: result.confidence_percentage,
+            status: "present"
+          });
+        } else {
+          dtr.time_in = localTime;
+          dtr.time_in_photo = captured_image;
+          dtr.time_in_verification_confidence = result.confidence_percentage;
+        }
+        await dtr.save();
+      } else {
+        // Clock out
+        if (!dtr || !dtr.time_in) {
+          return res.status(400).json({
+            error: `Cannot clock out. No Time-In record found for ${matchedEmployee.name} today (${localDate}).`
+          });
+        }
+
+        dtr.time_out = localTime;
+        dtr.time_out_photo = captured_image;
+        dtr.time_out_verification_confidence = result.confidence_percentage;
+        dtr.status = "completed";
+        await dtr.save();
+      }
+
+      const updatedDtr = await DailyTimeRecord.findById(dtr._id).populate("employee_id");
+
+      res.json({
+        success: true,
+        action: clockAction,
+        time: localTime,
+        date: localDate,
+        confidence: result.confidence_percentage,
+        reason: result.reason,
+        employee: mapId(matchedEmployee),
+        dtr: updatedDtr ? {
+          id: updatedDtr._id.toString(),
+          employee_id: mapId(matchedEmployee),
+          date: updatedDtr.date,
+          time_in: updatedDtr.time_in,
+          time_out: updatedDtr.time_out,
+          status: updatedDtr.status
+        } : null
+      });
+
+    } catch (err: any) {
+      console.error("Error in facial recognition API:", err);
+      res.status(500).json({ 
+        error: "Facial recognition analysis failed: " + (err.message || "Unknown error")
+      });
+    }
+  }));
+
+  // Manual DTR Creation / Editing Endpoint (for admins/managers)
+  app.post("/api/dtr/manual", catchAsync(async (req: express.Request, res: express.Response) => {
+    const { employee_id, date, time_in, time_out, status, notes } = req.body;
+    if (!employee_id || !date) {
+      return res.status(400).json({ error: "Employee and date are required." });
+    }
+
+    let dtr = await DailyTimeRecord.findOne({ employee_id, date });
+    if (dtr) {
+      if (time_in !== undefined) dtr.time_in = time_in;
+      if (time_out !== undefined) dtr.time_out = time_out;
+      if (status !== undefined) dtr.status = status;
+      if (notes !== undefined) dtr.notes = notes;
+      await dtr.save();
+    } else {
+      dtr = await DailyTimeRecord.create({
+        employee_id,
+        date,
+        time_in,
+        time_out,
+        status: status || (time_out ? "completed" : "present"),
+        notes
+      });
+    }
+
+    const populated = await DailyTimeRecord.findById(dtr._id).populate("employee_id");
+    res.json({ success: true, dtr: populated });
+  }));
+
+  app.delete("/api/dtr/:id", catchAsync(async (req: express.Request, res: express.Response) => {
+    await DailyTimeRecord.findByIdAndDelete(req.params.id);
+    res.json({ success: true });
+  }));
+
   // Settings
   app.get("/api/users", catchAsync(async (req: express.Request, res: express.Response) => {
     const users = await User.find({}, "username role full_name assigned_flock_id");
@@ -1284,7 +1589,7 @@ async function startServer() {
       users, farmProfile, flocks, feedTypes, feedInventory, 
       feedIncoming, feedConsumption, mortality, eggs, 
       medicineInventory, medicineAdministration, employees, flockTransfers,
-      medicineTypes, medicineIncoming, weightStandards, weightRecords
+      medicineTypes, medicineIncoming, weightStandards, weightRecords, dtrRecords
     ] = await Promise.all([
       User.find(), // Include hashed passwords for lossless backup/restore
       FarmProfile.find(),
@@ -1302,12 +1607,13 @@ async function startServer() {
       MedicineType.find(),
       MedicineIncoming.find(),
       WeightStandard.find(),
-      WeightRecord.find()
+      WeightRecord.find(),
+      DailyTimeRecord.find()
     ]);
 
     const backupData = {
       timestamp: new Date().toISOString(),
-      version: "1.1.0",
+      version: "1.2.0",
       data: {
         users,
         farmProfile,
@@ -1325,7 +1631,8 @@ async function startServer() {
         medicineTypes,
         medicineIncoming,
         weightStandards,
-        weightRecords
+        weightRecords,
+        dtrRecords
       }
     };
 
@@ -1338,7 +1645,6 @@ async function startServer() {
     if (!data) return res.status(400).json({ success: false, message: "No data provided" });
 
     // Clear and restore each collection
-    // We use Promise.all to make it faster, but we must be careful with order if there were strict foreign keys (Mongoose doesn't enforce them by default)
     await Promise.all([
       User.deleteMany({}),
       FarmProfile.deleteMany({}),
@@ -1356,7 +1662,8 @@ async function startServer() {
       MedicineType.deleteMany({}),
       MedicineIncoming.deleteMany({}),
       WeightStandard.deleteMany({}),
-      WeightRecord.deleteMany({})
+      WeightRecord.deleteMany({}),
+      DailyTimeRecord.deleteMany({})
     ]);
 
     await Promise.all([
@@ -1376,7 +1683,8 @@ async function startServer() {
       data.medicineTypes && data.medicineTypes.length > 0 ? MedicineType.insertMany(data.medicineTypes) : Promise.resolve(),
       data.medicineIncoming && data.medicineIncoming.length > 0 ? MedicineIncoming.insertMany(data.medicineIncoming) : Promise.resolve(),
       data.weightStandards && data.weightStandards.length > 0 ? WeightStandard.insertMany(data.weightStandards) : Promise.resolve(),
-      data.weightRecords && data.weightRecords.length > 0 ? WeightRecord.insertMany(data.weightRecords) : Promise.resolve()
+      data.weightRecords && data.weightRecords.length > 0 ? WeightRecord.insertMany(data.weightRecords) : Promise.resolve(),
+      data.dtrRecords && data.dtrRecords.length > 0 ? DailyTimeRecord.insertMany(data.dtrRecords) : Promise.resolve()
     ]);
 
     res.json({ success: true, message: "Database restored successfully" });
