@@ -1,7 +1,6 @@
 {
   "name": "FarmFlow Pro",
   "description": "A comprehensive management system for broiler-breeder farms, featuring flock, feed, mortality, egg production, and employee management.",
-  "requestFramePermissions": [
-    "camera"
-  ]
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
