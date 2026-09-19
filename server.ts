@@ -8,6 +8,9 @@ import bcrypt from "bcryptjs";
 import { GoogleGenAI, Type } from "@google/genai";
 
 dotenv.config();
+if (fs.existsSync(".env.local")) {
+  dotenv.config({ path: ".env.local", override: true });
+}
 
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY,
@@ -18,8 +21,20 @@ const ai = new GoogleGenAI({
   }
 });
 
-const MONGODB_URI = process.env.MONGODB_URI || process.env.MONGODB_URl || "MISSING_MONGODB_URI";
-const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME || "production";
+function getTargetDbName(uri: string): string {
+  if (process.env.MONGODB_DB_NAME && process.env.MONGODB_DB_NAME.trim()) {
+    return process.env.MONGODB_DB_NAME.trim();
+  }
+  // Try extracting from URI path e.g. mongodb+srv://.../farm_management?retryWrites=true
+  try {
+    const withoutProtocol = uri.replace(/^mongodb(\+srv)?:\/\/[^/]+\//, "");
+    if (withoutProtocol && !withoutProtocol.startsWith("?")) {
+      const parsed = withoutProtocol.split("?")[0].trim();
+      if (parsed) return parsed;
+    }
+  } catch {}
+  return "farm_management";
+}
 
 // --- Mongoose Schemas & Models ---
 
@@ -255,18 +270,31 @@ async function startServer() {
     console.log(`Server running on http://localhost:${PORT}`);
   });
 
-  // Connect to MongoDB in the background
+  // Connect to MongoDB in the background with resilient retry loop
+  let isConnecting = false;
+  let connectionRetries = 0;
+  let lastConnectionError: string | null = null;
+  let activeDbName = "farm_management";
+
   const connectDB = async () => {
+    if (mongoose.connection.readyState === 1 || isConnecting) {
+      return;
+    }
+    isConnecting = true;
     try {
-      let uri = MONGODB_URI.trim();
+      let uri = (process.env.MONGODB_URI || process.env.MONGODB_URl || "").trim();
       
-      if (uri === "MISSING_MONGODB_URI") {
-        console.error("CRITICAL: MONGODB_URI is missing. Please set it in Settings > Environment Variables.");
+      if (!uri || uri === "MISSING_MONGODB_URI") {
+        lastConnectionError = "MONGODB_URI is missing. Please set it in Settings > Environment Variables or .env.local file.";
+        console.error(`CRITICAL: ${lastConnectionError}`);
+        isConnecting = false;
         return;
       } 
       
-      if (uri.includes("<password>") || uri.includes("<") || uri.includes(">")) {
-        console.error("CRITICAL: MONGODB_URI contains placeholder characters '<' or '>'.");
+      if (uri.includes("<") || uri.includes(">")) {
+        lastConnectionError = "MONGODB_URI contains placeholder characters '<' or '>'. Please remove '<' and '>' around your password.";
+        console.error(`CRITICAL: ${lastConnectionError}`);
+        isConnecting = false;
         return;
       }
 
@@ -284,21 +312,17 @@ async function startServer() {
       // Final space removal just in case
       uri = uri.replace(/\s/g, "");
 
-      console.log("Attempting to connect to MongoDB...");
-      
-      mongoose.connection.on('error', (err) => {
-        console.error("MongoDB Connection Error Event:", err.message);
-      });
-
-      mongoose.connection.on('disconnected', () => {
-        console.warn("MongoDB Disconnected Event");
-      });
+      activeDbName = getTargetDbName(uri);
+      console.log(`[MongoDB] Connecting to database "${activeDbName}"...`);
 
       await mongoose.connect(uri, {
-        dbName: MONGODB_DB_NAME,
-        serverSelectionTimeoutMS: 5000,
+        dbName: activeDbName,
+        serverSelectionTimeoutMS: 8000,
       });
-      console.log("Connected to MongoDB successfully");
+
+      console.log(`[MongoDB] Connected successfully to database "${activeDbName}"`);
+      lastConnectionError = null;
+      connectionRetries = 0;
 
       // Seed initial admin if not exists
       const adminExists = await User.findOne({ username: "admin" });
@@ -310,6 +334,7 @@ async function startServer() {
           role: "admin",
           full_name: "System Administrator"
         });
+        console.log("[MongoDB] Default administrator seeded: admin / FarmFlowAdmin2026!");
       }
 
       // Seed initial farm profile if not exists
@@ -319,37 +344,90 @@ async function startServer() {
           name: "My Poultry Farm",
           address: "123 Farm Lane"
         });
+        console.log("[MongoDB] Default farm profile created");
       }
     } catch (err: any) {
-      console.error("CRITICAL: Failed to connect to MongoDB:", err.message);
+      connectionRetries++;
+      lastConnectionError = err.message || "Failed to connect to MongoDB";
+      console.error(`[MongoDB] Connection attempt ${connectionRetries} failed:`, lastConnectionError);
+    } finally {
+      isConnecting = false;
     }
   };
 
+  // Connection events
+  mongoose.connection.on('error', (err) => {
+    lastConnectionError = err.message;
+    console.error("[MongoDB] Connection Error Event:", err.message);
+  });
+
+  mongoose.connection.on('disconnected', () => {
+    console.warn("[MongoDB] Disconnected Event. Will auto-retry in background...");
+  });
+
+  // Initial connection
   connectDB();
 
-  // Health check - always accessible regardless of DB state
+  // Background auto-reconnect interval every 8 seconds if disconnected
+  setInterval(() => {
+    if (mongoose.connection.readyState !== 1 && !isConnecting) {
+      connectDB();
+    }
+  }, 8000);
+
+  // Health check - always accessible regardless of DB state with diagnostics
   app.get("/api/health", (req, res) => {
+    const isConnected = mongoose.connection.readyState === 1;
     res.json({ 
       status: "ok", 
-      database: mongoose.connection.readyState === 1 ? "connected" : "disconnected",
+      database: isConnected ? "connected" : "disconnected",
       dbReadyState: mongoose.connection.readyState,
+      dbName: isConnected ? (mongoose.connection.name || activeDbName) : activeDbName,
+      lastError: isConnected ? null : lastConnectionError,
       timestamp: new Date().toISOString()
+    });
+  });
+
+  // Explicit DB reconnect endpoint
+  app.post("/api/db/reconnect", async (req, res) => {
+    if (mongoose.connection.readyState === 1) {
+      return res.json({ 
+        success: true, 
+        message: `Database is already connected to "${mongoose.connection.name || activeDbName}"`,
+        dbReadyState: 1 
+      });
+    }
+    await connectDB();
+    const isConnected = (mongoose.connection.readyState as number) === 1;
+    return res.json({
+      success: isConnected,
+      message: isConnected ? `Connected successfully to database "${activeDbName}"` : (lastConnectionError || "Failed to connect"),
+      dbReadyState: mongoose.connection.readyState
     });
   });
 
   // Middleware to check DB connection for API routes
   app.use("/api", (req, res, next) => {
+    // Exclude diagnostics from blocking
+    if (req.path === "/health" || req.path === "/db/reconnect") {
+      return next();
+    }
+
     if (mongoose.connection.readyState !== 1) {
-      let message = "Database connection is not established. Please check your MONGODB_URI and IP whitelist in Atlas.";
-      if (MONGODB_URI === "MISSING_MONGODB_URI") {
-        message = "MONGODB_URI is missing. Please set it in Settings > Environment Variables.";
-      } else if (MONGODB_URI.includes("<") || MONGODB_URI.includes(">")) {
-        message = "MONGODB_URI contains placeholder characters '<' or '>'. Please remove them from your password in Settings.";
+      const uri = (process.env.MONGODB_URI || process.env.MONGODB_URl || "").trim();
+      let message = "Database connection is not established. Please verify your MONGODB_URI and IP whitelist in Atlas (allow 0.0.0.0/0).";
+      if (!uri || uri === "MISSING_MONGODB_URI") {
+        message = "MONGODB_URI is missing. Please set it in Settings > Environment Variables or your .env.local file.";
+      } else if (uri.includes("<") || uri.includes(">")) {
+        message = "MONGODB_URI contains placeholder '<' or '>'. Remove the angle brackets from your password.";
+      } else if (lastConnectionError) {
+        message = `MongoDB: ${lastConnectionError}. Ensure 0.0.0.0/0 is added in MongoDB Atlas Network Access.`;
       }
       return res.status(503).json({ 
         success: false, 
         message,
-        dbStatus: mongoose.connection.readyState
+        dbStatus: mongoose.connection.readyState,
+        errorDetails: lastConnectionError
       });
     }
     next();

@@ -9,7 +9,9 @@
     "start": "node dist/server.cjs",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "db:check": "tsx scripts/checkDB.ts",
+    "db:seed": "tsx scripts/seedData.ts"
   },
   "dependencies": {
     "@google/genai": "^2.16.0",

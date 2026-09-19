@@ -2,11 +2,28 @@
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
+import fs from 'fs';
 
 dotenv.config();
+if (fs.existsSync(".env.local")) {
+  dotenv.config({ path: ".env.local", override: true });
+}
+
+function getTargetDbName(uri: string): string {
+  if (process.env.MONGODB_DB_NAME && process.env.MONGODB_DB_NAME.trim()) {
+    return process.env.MONGODB_DB_NAME.trim();
+  }
+  try {
+    const withoutProtocol = uri.replace(/^mongodb(\+srv)?:\/\/[^/]+\//, "");
+    if (withoutProtocol && !withoutProtocol.startsWith("?")) {
+      const parsed = withoutProtocol.split("?")[0].trim();
+      if (parsed) return parsed;
+    }
+  } catch {}
+  return "farm_management";
+}
 
 const MONGODB_URI = process.env.MONGODB_URI || process.env.MONGODB_URl || "MISSING_MONGODB_URI";
-const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME || "production";
 
 // Define Schemas (Simplified for seeding)
 const userSchema = new mongoose.Schema({
@@ -155,12 +172,14 @@ async function seed() {
   }
   uri = uri.replace(/\s/g, "");
   
-  if (uri === "MISSING_MONGODB_URI") {
-    console.error("MONGODB_URI is missing");
+  if (uri === "MISSING_MONGODB_URI" || !uri) {
+    console.error("❌ MONGODB_URI is missing. Please configure it in .env or .env.local.");
     return;
   }
 
-  await mongoose.connect(uri, { dbName: MONGODB_DB_NAME });
+  const dbName = getTargetDbName(uri);
+  console.log(`Connecting to MongoDB database "${dbName}" for seeding...`);
+  await mongoose.connect(uri, { dbName });
   console.log("Connected for seeding...");
 
   const db = mongoose.connection.db;
