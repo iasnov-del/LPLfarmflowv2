@@ -1,5 +1,23 @@
 import React, { useState, useRef } from 'react';
-import { Shield, UserCheck, Download, Database, Upload, AlertTriangle, User, Trash2, Smartphone, Laptop } from 'lucide-react';
+import { 
+  Shield, 
+  UserCheck, 
+  Download, 
+  Database, 
+  Upload, 
+  AlertTriangle, 
+  User, 
+  Trash2, 
+  Smartphone, 
+  Laptop, 
+  Key, 
+  Lock, 
+  Eye, 
+  EyeOff, 
+  Check, 
+  X, 
+  Loader2 
+} from 'lucide-react';
 import { useApi } from '../hooks/useApi';
 import { apiFetch } from '../utils/api';
 
@@ -11,6 +29,77 @@ export default function Settings({ user, onLogout }: { user: any, onLogout: () =
   const [isRestoring, setIsRestoring] = useState(false);
   const [installTab, setInstallTab] = useState<'ios' | 'android' | 'desktop'>('ios');
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Password editing state
+  const [passwordModalUser, setPasswordModalUser] = useState<any | null>(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [passwordSuccess, setPasswordSuccess] = useState<string | null>(null);
+  const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
+
+  const handleOpenPasswordModal = (targetUser: any) => {
+    setPasswordModalUser(targetUser);
+    setNewPassword('');
+    setConfirmPassword('');
+    setShowPassword(false);
+    setPasswordError(null);
+    setPasswordSuccess(null);
+    setIsUpdatingPassword(false);
+  };
+
+  const handleClosePasswordModal = () => {
+    if (isUpdatingPassword) return;
+    setPasswordModalUser(null);
+    setNewPassword('');
+    setConfirmPassword('');
+    setPasswordError(null);
+    setPasswordSuccess(null);
+  };
+
+  const handleUpdatePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!passwordModalUser) return;
+
+    if (newPassword.trim().length < 4) {
+      setPasswordError('Password must be at least 4 characters long.');
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setPasswordError('Passwords do not match. Please verify both fields.');
+      return;
+    }
+
+    setIsUpdatingPassword(true);
+    setPasswordError(null);
+    setPasswordSuccess(null);
+
+    try {
+      const res = await apiFetch(`/api/users/${passwordModalUser.id}/password`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ newPassword: newPassword.trim() }),
+      });
+
+      if (res.success) {
+        setPasswordSuccess(`Password for @${passwordModalUser.username} successfully updated.`);
+        setTimeout(() => {
+          handleClosePasswordModal();
+          refreshUsers();
+          refreshResetRequests();
+        }, 1200);
+      } else {
+        setPasswordError(res.message || 'Failed to update password.');
+      }
+    } catch (err: any) {
+      console.error('Failed to update password', err);
+      setPasswordError(err.message || 'An unexpected error occurred while updating the password.');
+    } finally {
+      setIsUpdatingPassword(false);
+    }
+  };
 
   const handleUserUpdate = async (userId: string, newRole: string, newFlockId: string | null) => {
     try {
@@ -177,7 +266,15 @@ export default function Settings({ user, onLogout }: { user: any, onLogout: () =
               {user.role.replace('_', ' ')}
             </span>
           </div>
-          <div className="flex items-end">
+          <div className="flex items-end flex-wrap gap-4">
+            <button
+              onClick={() => handleOpenPasswordModal({ id: user.id, username: user.username, full_name: user.fullName })}
+              className="flex items-center space-x-2 text-stone-700 hover:text-pastel-green-700 transition-colors text-sm font-bold bg-white px-3 py-1.5 rounded-xl border border-stone-200 shadow-sm"
+              title="Change your personal password"
+            >
+              <Key size={16} className="text-pastel-green-600" />
+              <span>Change Password</span>
+            </button>
             <button 
               onClick={handleDeleteSelf}
               className="flex items-center space-x-2 text-red-600 hover:text-red-700 transition-colors text-sm font-bold"
@@ -288,14 +385,23 @@ export default function Settings({ user, onLogout }: { user: any, onLogout: () =
                         </select>
                       </td>
                       <td className="px-6 py-4 text-center">
-                        <button 
-                          onClick={() => handleDeleteUser(u.id, u.username)}
-                          disabled={u.id === user.id && users.filter(usr => usr.role === 'admin').length === 1}
-                          className="text-red-500 hover:text-red-700 disabled:opacity-30 p-2 rounded-lg hover:bg-red-50 transition-colors"
-                          title={u.id === user.id ? "Cannot delete the last remaining admin" : "Delete User"}
-                        >
-                          <Trash2 size={18} />
-                        </button>
+                        <div className="flex items-center justify-center space-x-2">
+                          <button 
+                            onClick={() => handleOpenPasswordModal(u)}
+                            className="text-stone-500 hover:text-pastel-green-600 p-2 rounded-lg hover:bg-pastel-green-50 transition-colors"
+                            title={`Edit password for @${u.username}`}
+                          >
+                            <Key size={18} />
+                          </button>
+                          <button 
+                            onClick={() => handleDeleteUser(u.id, u.username)}
+                            disabled={u.id === user.id && users.filter(usr => usr.role === 'admin').length === 1}
+                            className="text-red-500 hover:text-red-700 disabled:opacity-30 p-2 rounded-lg hover:bg-red-50 transition-colors"
+                            title={u.id === user.id ? "Cannot delete the last remaining admin" : "Delete User"}
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -532,6 +638,128 @@ export default function Settings({ user, onLogout }: { user: any, onLogout: () =
           </div>
         </div>
       </div>
+
+      {/* Edit Password Modal */}
+      {passwordModalUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl shadow-2xl border border-stone-200 max-w-md w-full p-6 relative overflow-hidden">
+            <div className="flex items-start justify-between pb-4 mb-4 border-b border-stone-100">
+              <div className="flex items-center space-x-3">
+                <div className="p-2.5 bg-pastel-green-100 text-pastel-green-800 rounded-2xl">
+                  <Key size={22} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-stone-900">Edit User Password</h3>
+                  <p className="text-xs text-stone-500">
+                    Updating for <span className="font-bold text-stone-700">{passwordModalUser.full_name || passwordModalUser.username}</span> (@{passwordModalUser.username})
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleClosePasswordModal}
+                disabled={isUpdatingPassword}
+                className="p-1.5 text-stone-400 hover:text-stone-700 hover:bg-stone-100 rounded-xl transition-colors disabled:opacity-50"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {passwordError && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl flex items-center space-x-2">
+                <AlertTriangle size={16} className="shrink-0" />
+                <span>{passwordError}</span>
+              </div>
+            )}
+
+            {passwordSuccess && (
+              <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs rounded-xl flex items-center space-x-2">
+                <Check size={16} className="shrink-0" />
+                <span>{passwordSuccess}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleUpdatePassword} className="space-y-4">
+              <div>
+                <label className="block text-xs uppercase font-bold text-stone-600 mb-1">
+                  New Password
+                </label>
+                <div className="relative">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    required
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="Enter new password (min. 4 chars)"
+                    disabled={isUpdatingPassword}
+                    className="w-full text-sm border border-stone-200 rounded-xl px-3.5 py-2.5 pr-10 focus:ring-2 focus:ring-pastel-green-400 outline-none transition-all"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600"
+                  >
+                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs uppercase font-bold text-stone-600 mb-1">
+                  Confirm New Password
+                </label>
+                <div className="relative">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    required
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Repeat new password"
+                    disabled={isUpdatingPassword}
+                    className="w-full text-sm border border-stone-200 rounded-xl px-3.5 py-2.5 pr-10 focus:ring-2 focus:ring-pastel-green-400 outline-none transition-all"
+                  />
+                </div>
+                {confirmPassword && newPassword !== confirmPassword && (
+                  <p className="text-[11px] text-red-500 font-medium mt-1">Passwords do not match.</p>
+                )}
+                {confirmPassword && newPassword === confirmPassword && newPassword.length >= 4 && (
+                  <p className="text-[11px] text-emerald-600 font-medium mt-1 flex items-center gap-1">
+                    <Check size={12} /> Passwords match!
+                  </p>
+                )}
+              </div>
+
+              <div className="flex items-center justify-end space-x-3 pt-3 border-t border-stone-100">
+                <button
+                  type="button"
+                  onClick={handleClosePasswordModal}
+                  disabled={isUpdatingPassword}
+                  className="px-4 py-2.5 text-xs font-bold text-stone-600 hover:bg-stone-100 rounded-xl transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isUpdatingPassword || newPassword.length < 4 || newPassword !== confirmPassword}
+                  className="px-5 py-2.5 bg-pastel-green-600 hover:bg-pastel-green-700 text-white text-xs font-bold rounded-xl transition-all shadow-sm hover:shadow disabled:opacity-40 flex items-center space-x-2"
+                >
+                  {isUpdatingPassword ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" />
+                      <span>Saving...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Lock size={14} />
+                      <span>Update Password</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1187,6 +1187,27 @@ async function startServer() {
     res.json({ success: true });
   }));
 
+  app.put("/api/users/:id/password", catchAsync(async (req: express.Request, res: express.Response) => {
+    const { newPassword } = req.body;
+    if (!newPassword || typeof newPassword !== "string" || newPassword.trim().length < 4) {
+      return res.status(400).json({ success: false, message: "Password must be at least 4 characters long." });
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword.trim(), 10);
+    const updatedUser = await User.findByIdAndUpdate(req.params.id, { password: hashedPassword });
+    if (!updatedUser) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    // If there were any pending password reset requests for this user, mark them approved
+    await PasswordResetRequest.updateMany(
+      { username: updatedUser.username, status: "pending" },
+      { status: "approved" }
+    );
+
+    res.json({ success: true, message: "Password updated successfully." });
+  }));
+
   app.delete("/api/users/:id", catchAsync(async (req: express.Request, res: express.Response) => {
     await User.findByIdAndDelete(req.params.id);
     res.json({ success: true });
