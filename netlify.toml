@@ -7,6 +7,10 @@
   SECRETS_SCAN_ENABLED = "false"
   SECRETS_SCAN_OMIT_KEYS = "VITE_API_URL,MONGODB_DB_NAME,MONGODB_URI"
 
+[functions]
+  node_bundler = "esbuild"
+  external_node_modules = ["lightningcss", "vite", "@google/genai", "mongoose", "bcryptjs", "node-domexception"]
+
 [[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/api/:splat"

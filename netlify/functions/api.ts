@@ -1,5 +1,5 @@
 import serverless from "serverless-http";
-import { app, connectDB } from "../../server";
+import { app, connectDB } from "../../server-app";
 
 let dbInitialized = false;
 const serverlessHandler = serverless(app);
