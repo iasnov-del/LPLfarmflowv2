@@ -19,7 +19,7 @@ import {
   Loader2 
 } from 'lucide-react';
 import { useApi } from '../hooks/useApi';
-import { apiFetch } from '../utils/api';
+import { apiFetch, getApiBaseUrl, CLOUD_RUN_BACKEND_URL } from '../utils/api';
 
 export default function Settings({ user, onLogout }: { user: any, onLogout: () => void }) {
   const { data: users, loading, refresh: refreshUsers } = useApi<any[]>('/api/users');
@@ -619,7 +619,7 @@ export default function Settings({ user, onLogout }: { user: any, onLogout: () =
 
       <div className="card bg-pastel-green-900 text-white">
         <h2 className="text-xl font-bold mb-4">System Information</h2>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-4">
           <div>
             <p className="text-pastel-green-300 text-xs uppercase font-bold">Version</p>
             <p className="font-mono">v1.1.0-mongodb</p>
@@ -636,6 +636,14 @@ export default function Settings({ user, onLogout }: { user: any, onLogout: () =
             <p className="text-pastel-green-300 text-xs uppercase font-bold">Auth Provider</p>
             <p className="font-mono">Local API (JWT/Session)</p>
           </div>
+        </div>
+        <div className="pt-4 border-t border-pastel-green-800/80 flex flex-wrap items-center justify-between gap-2 text-xs">
+          <span className="text-pastel-green-300">
+            Active Backend Server: <code className="font-mono text-white ml-1 bg-pastel-green-950/60 px-2 py-0.5 rounded">{getApiBaseUrl() || CLOUD_RUN_BACKEND_URL}</code>
+          </span>
+          <span className="text-pastel-green-400 text-[11px]">
+            {typeof window !== 'undefined' && window.location.hostname.includes('netlify.app') ? 'Hosted on Netlify (CORS / Proxy Active)' : 'Direct Cloud Run Connection'}
+          </span>
         </div>
       </div>
 

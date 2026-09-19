@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { LogIn, UserPlus, Bird, Eye, EyeOff, Check, X, Shield } from 'lucide-react';
+import { LogIn, UserPlus, Bird, Eye, EyeOff, Check, X, Shield, Server, Globe, RefreshCw } from 'lucide-react';
 import { motion } from 'motion/react';
-import { apiFetch } from '../utils/api';
+import { apiFetch, getApiBaseUrl, setCustomApiBaseUrl, CLOUD_RUN_BACKEND_URL } from '../utils/api';
 
 interface LoginProps {
   onLogin: (user: any) => void;
@@ -24,6 +24,12 @@ export default function Login({ onLogin, onRegister }: LoginProps) {
   const [resetMessage, setResetMessage] = useState('');
   const [resetError, setResetError] = useState('');
   const [isResetting, setIsResetting] = useState(false);
+
+  // Server connection configuration state for Netlify / external deployments
+  const [isServerModalOpen, setIsServerModalOpen] = useState(false);
+  const [serverUrlInput, setServerUrlInput] = useState(getApiBaseUrl() || CLOUD_RUN_BACKEND_URL);
+  const [testConnectionStatus, setTestConnectionStatus] = useState<string | null>(null);
+  const [isTestingConnection, setIsTestingConnection] = useState(false);
 
   // New Password security requirements evaluation
   const getsLength = newPassword.length >= 8;
@@ -218,17 +224,153 @@ export default function Login({ onLogin, onRegister }: LoginProps) {
           </button>
         </form>
 
-        <div className="mt-10 pt-8 border-t border-stone-100 text-center">
-          <p className="text-stone-400 text-sm mb-6">Don't have an account yet?</p>
-          <button
-            onClick={onRegister}
-            className="btn-secondary w-full py-4 flex items-center justify-center"
-          >
-            <UserPlus size={20} className="mr-3" />
-            Create Account
-          </button>
+        <div className="mt-10 pt-8 border-t border-stone-100 text-center space-y-4">
+          <div>
+            <p className="text-stone-400 text-sm mb-4">Don't have an account yet?</p>
+            <button
+              onClick={onRegister}
+              className="btn-secondary w-full py-4 flex items-center justify-center"
+            >
+              <UserPlus size={20} className="mr-3" />
+              Create Account
+            </button>
+          </div>
+
+          <div className="pt-2">
+            <button
+              type="button"
+              onClick={() => {
+                setServerUrlInput(getApiBaseUrl() || CLOUD_RUN_BACKEND_URL);
+                setTestConnectionStatus(null);
+                setIsServerModalOpen(true);
+              }}
+              className="text-[11px] text-stone-400 hover:text-stone-700 transition-colors inline-flex items-center gap-1.5 py-1 px-2.5 rounded-full hover:bg-stone-100"
+              title="Configure or test connection to backend server"
+            >
+              <Server size={12} className="text-pastel-green-600" />
+              <span>
+                Backend API: {getApiBaseUrl() ? new URL(getApiBaseUrl(), window.location.href).host : 'Default (Cloud Run)'}
+              </span>
+            </button>
+          </div>
         </div>
       </motion.div>
+
+      {/* Backend Server Connection Settings Modal (for Netlify / external hosting) */}
+      {isServerModalOpen && (
+        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <motion.div 
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="bg-white rounded-[2rem] p-6 md:p-8 max-w-md w-full shadow-2xl border border-stone-100"
+          >
+            <div className="flex items-center justify-between pb-3 mb-4 border-b border-stone-100">
+              <div className="flex items-center space-x-2 text-pastel-green-800">
+                <Server size={20} />
+                <h3 className="text-lg font-bold text-stone-900">Backend API Server</h3>
+              </div>
+              <button 
+                onClick={() => setIsServerModalOpen(false)}
+                className="text-stone-400 hover:text-stone-600 p-1"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <p className="text-xs text-stone-500 mb-4 leading-relaxed">
+              When accessing FarmFlow via <strong>Netlify</strong> or custom domains, the web app connects to the Cloud Run backend server. You can test or update the backend URL below.
+            </p>
+
+            <div className="space-y-3 mb-5">
+              <div>
+                <label className="block text-[11px] font-bold text-stone-600 uppercase mb-1">
+                  API Server URL
+                </label>
+                <input
+                  type="text"
+                  value={serverUrlInput}
+                  onChange={(e) => setServerUrlInput(e.target.value)}
+                  placeholder={CLOUD_RUN_BACKEND_URL}
+                  className="w-full text-xs font-mono border border-stone-200 rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-pastel-green-400 outline-none"
+                />
+              </div>
+
+              {testConnectionStatus && (
+                <div className={`p-3 rounded-xl text-xs flex items-start gap-2 ${
+                  testConnectionStatus.includes('Connected') 
+                    ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' 
+                    : 'bg-amber-50 text-amber-800 border border-amber-200'
+                }`}>
+                  <Globe size={14} className="shrink-0 mt-0.5" />
+                  <span className="leading-tight">{testConnectionStatus}</span>
+                </div>
+              )}
+
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  disabled={isTestingConnection}
+                  onClick={async () => {
+                    setIsTestingConnection(true);
+                    setTestConnectionStatus(null);
+                    try {
+                      const testTarget = (serverUrlInput.trim() || CLOUD_RUN_BACKEND_URL).replace(/\/$/, '') + '/api/health';
+                      const res = await fetch(testTarget, { headers: { Accept: 'application/json' } });
+                      if (res.ok) {
+                        const data = await res.json();
+                        setTestConnectionStatus(`Connected! Server is online (DB: ${data.database || 'ready'}).`);
+                      } else {
+                        setTestConnectionStatus(`Server reachable, status HTTP ${res.status}`);
+                      }
+                    } catch (err: any) {
+                      setTestConnectionStatus(`Connection failed: ${err.message || 'Cannot reach server'}`);
+                    } finally {
+                      setIsTestingConnection(false);
+                    }
+                  }}
+                  className="px-3 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
+                >
+                  <RefreshCw size={12} className={isTestingConnection ? 'animate-spin' : ''} />
+                  <span>{isTestingConnection ? 'Testing...' : 'Test Connection'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setServerUrlInput(CLOUD_RUN_BACKEND_URL);
+                    setCustomApiBaseUrl(null);
+                    setTestConnectionStatus('Reset to default Cloud Run backend.');
+                  }}
+                  className="px-3 py-1.5 text-stone-500 hover:text-stone-800 text-xs font-semibold"
+                >
+                  Reset to Default
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-stone-100">
+              <button
+                type="button"
+                onClick={() => setIsServerModalOpen(false)}
+                className="px-4 py-2 text-xs font-bold text-stone-600 hover:bg-stone-100 rounded-xl transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setCustomApiBaseUrl(serverUrlInput.trim() || null);
+                  setIsServerModalOpen(false);
+                  window.location.reload();
+                }}
+                className="px-4 py-2 bg-pastel-green-600 hover:bg-pastel-green-700 text-white text-xs font-bold rounded-xl transition-all shadow-sm"
+              >
+                Save & Apply
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
 
       {/* Forgot Password Modal */}
       {isResetModalOpen && (

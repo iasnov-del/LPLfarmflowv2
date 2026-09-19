@@ -221,6 +221,25 @@ const TreatmentPlan = mongoose.model("TreatmentPlan", treatmentPlanSchema);
 
 async function startServer() {
   const app = express();
+
+  // Enable CORS for Netlify, external frontends, and cross-origin requests
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+    } else {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+    }
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+
+    if (req.method === "OPTIONS") {
+      return res.status(200).end();
+    }
+    next();
+  });
+
   app.use(express.json({ limit: '10mb' }));
   
   // Minimal logger
@@ -308,6 +327,16 @@ async function startServer() {
 
   connectDB();
 
+  // Health check - always accessible regardless of DB state
+  app.get("/api/health", (req, res) => {
+    res.json({ 
+      status: "ok", 
+      database: mongoose.connection.readyState === 1 ? "connected" : "disconnected",
+      dbReadyState: mongoose.connection.readyState,
+      timestamp: new Date().toISOString()
+    });
+  });
+
   // Middleware to check DB connection for API routes
   app.use("/api", (req, res, next) => {
     if (mongoose.connection.readyState !== 1) {
@@ -385,15 +414,6 @@ async function startServer() {
   }));
 
   // API Routes
-  
-  // Health check
-  app.get("/api/health", (req, res) => {
-    res.json({ 
-      status: "ok", 
-      database: mongoose.connection.readyState === 1 ? "connected" : "disconnected",
-      timestamp: new Date().toISOString()
-    });
-  });
 
   // Auth
   app.post("/api/login", catchAsync(async (req: express.Request, res: express.Response) => {
