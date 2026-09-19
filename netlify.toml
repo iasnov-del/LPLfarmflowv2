@@ -2,11 +2,9 @@
   publish = "dist"
   command = "npm run build"
 
-[[redirects]]
-  from = "/api/*"
-  to = "https://ais-pre-cztzcg2anndmdbze6ale65-531558609499.asia-east1.run.app/api/:splat"
-  status = 200
-  force = true
+[build.environment]
+  SECRETS_SCAN_ENABLED = "false"
+  SECRETS_SCAN_OMIT_KEYS = "VITE_API_URL,MONGODB_DB_NAME,MONGODB_URI"
 
 [[redirects]]
   from = "/*"

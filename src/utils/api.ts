@@ -1,5 +1,6 @@
-// Cloud Run backend URL for this applet
-export const CLOUD_RUN_BACKEND_URL = "https://ais-pre-cztzcg2anndmdbze6ale65-531558609499.asia-east1.run.app";
+// Default Cloud Run backend URL for this applet
+const DEFAULT_SUBDOMAIN = "ais-pre-cztzcg2anndmdbze6ale65-531558609499";
+export const CLOUD_RUN_BACKEND_URL = `https://${DEFAULT_SUBDOMAIN}.asia-east1.run.app`;
 
 /**
  * Resolves the appropriate backend API base URL based on environment,
@@ -17,7 +18,13 @@ export function getApiBaseUrl(): string {
     // 2. Check for user-defined custom API URL in localStorage
     const savedUrl = localStorage.getItem("farmflow_api_url");
     if (savedUrl && savedUrl.trim()) {
-      return savedUrl.trim().replace(/\/$/, "");
+      const clean = savedUrl.trim().replace(/\/$/, "");
+      if (clean.includes("ais-pre.cztzcg2anndmdbze6ale65")) {
+        const fixed = clean.replace("ais-pre.cztzcg2anndmdbze6ale65", "ais-pre-cztzcg2anndmdbze6ale65");
+        localStorage.setItem("farmflow_api_url", fixed);
+        return fixed;
+      }
+      return clean;
     }
 
     // 3. When deployed and running on Netlify (e.g., *.netlify.app)
