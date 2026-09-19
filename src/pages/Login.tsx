@@ -240,7 +240,7 @@ export default function Login({ onLogin, onRegister }: LoginProps) {
             <button
               type="button"
               onClick={() => {
-                setServerUrlInput(getApiBaseUrl() || CLOUD_RUN_BACKEND_URL);
+                setServerUrlInput(getApiBaseUrl());
                 setTestConnectionStatus(null);
                 setIsServerModalOpen(true);
               }}
@@ -249,7 +249,7 @@ export default function Login({ onLogin, onRegister }: LoginProps) {
             >
               <Server size={12} className="text-pastel-green-600" />
               <span>
-                Backend API: {getApiBaseUrl() ? new URL(getApiBaseUrl(), window.location.href).host : 'Default (Cloud Run)'}
+                Backend API: {getApiBaseUrl() ? new URL(getApiBaseUrl(), window.location.href).host : 'Default (Netlify Functions / Same-Origin)'}
               </span>
             </button>
           </div>
@@ -278,19 +278,19 @@ export default function Login({ onLogin, onRegister }: LoginProps) {
             </div>
 
             <p className="text-xs text-stone-500 mb-4 leading-relaxed">
-              When accessing FarmFlow via <strong>Netlify</strong> or custom domains, the web app connects to the Cloud Run backend server. You can test or update the backend URL below.
+              On <strong>Netlify</strong>, the backend runs serverlessly via Netlify Functions on the same origin (leave blank for default). If you deployed your backend separately on Render, Railway, or Cloud Run, you can specify that URL below.
             </p>
 
             <div className="space-y-3 mb-5">
               <div>
                 <label className="block text-[11px] font-bold text-stone-600 uppercase mb-1">
-                  API Server URL
+                  API Server URL (Leave blank for default)
                 </label>
                 <input
                   type="text"
                   value={serverUrlInput}
                   onChange={(e) => setServerUrlInput(e.target.value)}
-                  placeholder={CLOUD_RUN_BACKEND_URL}
+                  placeholder="https://your-backend.onrender.com (or leave empty for Netlify Functions)"
                   className="w-full text-xs font-mono border border-stone-200 rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-pastel-green-400 outline-none"
                 />
               </div>
@@ -314,9 +314,13 @@ export default function Login({ onLogin, onRegister }: LoginProps) {
                     setIsTestingConnection(true);
                     setTestConnectionStatus(null);
                     try {
-                      const testTarget = (serverUrlInput.trim() || CLOUD_RUN_BACKEND_URL).replace(/\/$/, '') + '/api/health';
+                      const base = serverUrlInput.trim().replace(/\/$/, '');
+                      const testTarget = base ? `${base}/api/health` : '/api/health';
                       const res = await fetch(testTarget, { headers: { Accept: 'application/json' } });
-                      if (res.ok) {
+                      const contentType = res.headers.get('content-type') || '';
+                      if (contentType.includes('text/html')) {
+                        setTestConnectionStatus('Received HTML instead of JSON. Ensure Netlify Functions are active.');
+                      } else if (res.ok) {
                         const data = await res.json();
                         setTestConnectionStatus(`Connected! Server is online (DB: ${data.database || 'ready'}).`);
                       } else {
@@ -337,9 +341,9 @@ export default function Login({ onLogin, onRegister }: LoginProps) {
                 <button
                   type="button"
                   onClick={() => {
-                    setServerUrlInput(CLOUD_RUN_BACKEND_URL);
+                    setServerUrlInput('');
                     setCustomApiBaseUrl(null);
-                    setTestConnectionStatus('Reset to default Cloud Run backend.');
+                    setTestConnectionStatus('Reset to default (same-origin Netlify Functions).');
                   }}
                   className="px-3 py-1.5 text-stone-500 hover:text-stone-800 text-xs font-semibold"
                 >

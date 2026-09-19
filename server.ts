@@ -1,5 +1,4 @@
 import express from "express";
-import { createServer as createViteServer } from "vite";
 import mongoose from "mongoose";
 import path from "path";
 import fs from "fs";
@@ -234,45 +233,46 @@ const TreatmentPlan = mongoose.model("TreatmentPlan", treatmentPlanSchema);
 
 // --- End Models ---
 
-async function startServer() {
-  const app = express();
+export const app = express();
 
-  // Enable CORS for Netlify, external frontends, and cross-origin requests
-  app.use((req, res, next) => {
-    const origin = req.headers.origin;
-    if (origin) {
-      res.setHeader("Access-Control-Allow-Origin", origin);
-    } else {
-      res.setHeader("Access-Control-Allow-Origin", "*");
-    }
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
-    res.setHeader("Access-Control-Allow-Credentials", "true");
+// Normalize Netlify function path if invoked through /.netlify/functions/api
+app.use((req, res, next) => {
+  if (req.url.startsWith("/.netlify/functions/api")) {
+    const subPath = req.url.replace("/.netlify/functions/api", "");
+    req.url = subPath.startsWith("/api") ? subPath : "/api" + (subPath.startsWith("/") ? subPath : "/" + subPath);
+  }
+  next();
+});
 
-    if (req.method === "OPTIONS") {
-      return res.status(200).end();
-    }
-    next();
-  });
+// Enable CORS for Netlify, external frontends, and cross-origin requests
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+  } else {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+  }
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+  res.setHeader("Access-Control-Allow-Credentials", "true");
 
-  app.use(express.json({ limit: '10mb' }));
-  
-  // Minimal logger
-  app.use((req, res, next) => {
-    console.log(`${new Date().toISOString()} ${req.method} ${req.url}`);
-    next();
-  });
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+  next();
+});
 
-  const PORT = 3000;
-  
-  // Start listening immediately so the frontend can at least reach the server
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
+app.use(express.json({ limit: '10mb' }));
 
-  // Connect to MongoDB in the background with resilient retry loop
-  let isConnecting = false;
-  let connectionRetries = 0;
+// Minimal logger
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} ${req.method} ${req.url}`);
+  next();
+});
+
+// Connect to MongoDB in the background with resilient retry loop
+let isConnecting = false;
+let connectionRetries = 0;
   let lastConnectionError: string | null = null;
   let activeDbName = "farm_management";
 
@@ -1528,8 +1528,25 @@ async function startServer() {
     res.status(404).json({ success: false, message: `API route not found: ${req.method} ${req.originalUrl}` });
   });
 
+  // Global error handler for API
+  app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    console.error("Server Error:", err);
+    if (req.path.startsWith("/api")) {
+      return res.status(500).json({ 
+        success: false, 
+        message: "Internal server error", 
+        error: err.message 
+      });
+    }
+    next(err);
+  });
+
+export async function startServer() {
+  const PORT = 3000;
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -1543,19 +1560,20 @@ async function startServer() {
     });
   }
 
-  // Global error handler
+  // Non-API fallback error handler
   app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-    console.error("Server Error:", err);
-    if (req.path.startsWith("/api")) {
-      return res.status(500).json({ 
-        success: false, 
-        message: "Internal server error", 
-        error: err.message 
-      });
-    }
-    // For non-API routes, just send a generic error or let Vite handle it
     res.status(500).send("Internal Server Error");
+  });
+
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on http://localhost:${PORT}`);
   });
 }
 
-startServer();
+// Only launch standalone dev/prod server if not in a serverless/Netlify environment
+if (!process.env.NETLIFY && !process.env.AWS_LAMBDA_FUNCTION_NAME) {
+  startServer();
+}
+
+export { connectDB };
+

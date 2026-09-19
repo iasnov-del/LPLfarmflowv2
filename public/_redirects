@@ -1,2 +1,5 @@
+# Netlify serverless function routing for API
+/api/*    /.netlify/functions/api/:splat    200
+
 # SPA Client-Side Routing Fallback
-/*      /index.html                                                                        200
+/*        /index.html                       200

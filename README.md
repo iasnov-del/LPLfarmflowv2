@@ -90,3 +90,25 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 | **Check DB** | `npm run db:check` | Tests MongoDB connection and lists all collections and document counts |
 | **Seed DB** | `npm run db:seed` | Populates sample flock records, feed inventory, and test data |
 | **Lint** | `npm run lint` | Runs TypeScript type checking |
+
+---
+
+## 🌐 Deploying to Netlify
+
+FarmFlow includes native **Netlify Functions** support (`netlify/functions/api.ts`). When you push to GitHub and deploy on Netlify:
+
+1. **Both Frontend and Backend Deploy to Netlify**:
+   - The React frontend is served globally via Netlify's high-performance CDN.
+   - All `/api/*` endpoints are automatically handled serverlessly by Netlify Functions.
+   - **You do NOT need a separate backend host.**
+
+2. **Configure Environment Variables in Netlify**:
+   - Go to your site dashboard on Netlify: **Site configuration** > **Environment variables**.
+   - Add:
+     - `MONGODB_URI`: Your MongoDB Atlas connection string (`mongodb+srv://...`)
+     - `MONGODB_DB_NAME`: `farm_management`
+     - `GEMINI_API_KEY`: (Optional) For AI assistant features
+
+3. **Trigger Deploy**:
+   - Push your code to your GitHub repository or click **Trigger deploy** in Netlify.
+   - Netlify will build the frontend and compile the `/api` function. Once deployed, all login, flock, egg, and inventory records will work directly on your `.netlify.app` domain!
