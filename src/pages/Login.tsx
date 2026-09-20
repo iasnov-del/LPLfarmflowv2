@@ -206,13 +206,30 @@ export default function Login({ onLogin, onRegister }: LoginProps) {
           </div>
 
           {error && (
-            <motion.p 
-              initial={{ opacity: 0, scale: 0.9 }}
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
-              className="text-red-500 text-sm text-center font-medium bg-red-50 py-2 rounded-xl"
+              className="text-red-600 text-xs font-medium bg-red-50 p-3.5 rounded-xl border border-red-200 leading-relaxed text-left"
             >
-              {error}
-            </motion.p>
+              <p className="font-bold mb-1 text-red-700">Unable to Sign In</p>
+              <p>{error}</p>
+              {(error.toLowerCase().includes('database') || error.toLowerCase().includes('atlas') || error.toLowerCase().includes('mongodb') || error.toLowerCase().includes('whitelist')) && (
+                <div className="mt-2.5 pt-2 border-t border-red-200/60 flex items-center justify-between gap-2">
+                  <span className="text-[11px] text-red-500">Check server & database status:</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setServerUrlInput(getApiBaseUrl());
+                      setTestConnectionStatus(null);
+                      setIsServerModalOpen(true);
+                    }}
+                    className="text-[11px] font-bold text-red-700 underline hover:text-red-900 shrink-0"
+                  >
+                    Diagnose Backend
+                  </button>
+                </div>
+              )}
+            </motion.div>
           )}
 
           <button
@@ -319,12 +336,19 @@ export default function Login({ onLogin, onRegister }: LoginProps) {
                       const res = await fetch(testTarget, { headers: { Accept: 'application/json' } });
                       const contentType = res.headers.get('content-type') || '';
                       if (contentType.includes('text/html')) {
-                        setTestConnectionStatus('Received HTML instead of JSON. Ensure Netlify Functions are active.');
+                        setTestConnectionStatus('Received HTML instead of JSON. Ensure Netlify Functions are deployed.');
                       } else if (res.ok) {
                         const data = await res.json();
-                        setTestConnectionStatus(`Connected! Server is online (DB: ${data.database || 'ready'}).`);
+                        if (data.database === 'connected') {
+                          setTestConnectionStatus(`Connected! Server is online and MongoDB is active ("${data.dbName || 'farm_management'}").`);
+                        } else {
+                          const errPart = data.lastError ? ` (${data.lastError})` : '';
+                          const envPart = data.hasUriConfigured === false ? ' [MONGODB_URI not found in environment]' : '';
+                          setTestConnectionStatus(`Server online, but MongoDB disconnected${envPart}${errPart}. Check Atlas Network Access (0.0.0.0/0).`);
+                        }
                       } else {
-                        setTestConnectionStatus(`Server reachable, status HTTP ${res.status}`);
+                        const data = await res.json().catch(() => null);
+                        setTestConnectionStatus(data?.message || `Server responded with HTTP ${res.status}`);
                       }
                     } catch (err: any) {
                       setTestConnectionStatus(`Connection failed: ${err.message || 'Cannot reach server'}`);
